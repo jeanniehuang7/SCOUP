@@ -11,6 +11,7 @@
 #include <cfloat>
 #include <map>
 #include "node.h"
+#include <chrono>
 
 using namespace std;
 
@@ -34,6 +35,9 @@ public:
 	int _max_ite1;
 	int _max_ite2;
 	double _thresh;
+
+	double MSTEPBREAK[4] = {0.0};
+	double OSTEPBREAK[3] = {0.0};
 
 	Continuous_OU_process(int g, int c, int k, int max_ite1, int max_ite2, double alpha_min, double alpha_max, double t_min, double t_max, double sigma_squared_min, double thresh){
 		_max_ite1 = max_ite1;
@@ -102,17 +106,38 @@ public:
 		double ll=0;
 
 		int step=100, id=1;
+
+		double ESTEPTOTAL = 0;
+		double MSTEPTOTAL = 0;
+		double UPDATETOTAL = 0;
+		double OPTTOTAL = 0;
+
 		for(int i=0; i<_max_ite1; i++){
+			std::chrono::steady_clock::time_point ESTEPSTART = std::chrono::steady_clock::now();
 			E_step();
+			std::chrono::steady_clock::time_point ESTEPSEND = std::chrono::steady_clock::now();
+
+			std::chrono::steady_clock::time_point MSTEPSTART = std::chrono::steady_clock::now();
 			M_step();
+			std::chrono::steady_clock::time_point MSTEPSEND = std::chrono::steady_clock::now();
 
 			//update parameters
+			std::chrono::steady_clock::time_point UPDATESTART = std::chrono::steady_clock::now();
 			for(int j=0; j<_K; j++){
 				lineages[j].Update_parameter();
 			}
 			for(int j=0; j<_gene_num; j++){
 				genes[j].Update_parameter();
 			}
+			std::chrono::steady_clock::time_point UPDATEEND = std::chrono::steady_clock::now();
+
+			std::chrono::duration<double> TE = ESTEPSEND - ESTEPSTART;
+			std::chrono::duration<double> TM = MSTEPSEND - MSTEPSTART;
+			std::chrono::duration<double> TU = UPDATEEND - UPDATESTART;
+
+			ESTEPTOTAL += std::chrono::duration_cast<std::chrono::microseconds>(TE).count();
+			MSTEPTOTAL += std::chrono::duration_cast<std::chrono::milliseconds>(TM).count();
+			UPDATETOTAL += std::chrono::duration_cast<std::chrono::microseconds>(TU).count();
 
 			ll = Log_likelihood();
 
@@ -125,9 +150,25 @@ public:
 		}
 
 		for(int i=0; i<_max_ite2; i++){
+			std::chrono::steady_clock::time_point ESTEPSTART = std::chrono::steady_clock::now();
 			E_step();
+			std::chrono::steady_clock::time_point ESTEPSEND = std::chrono::steady_clock::now();
+
+			std::chrono::steady_clock::time_point OSTEPSTART = std::chrono::steady_clock::now();
 			Optimize_time();
+			std::chrono::steady_clock::time_point OSTEPSEND = std::chrono::steady_clock::now();
+
+			std::chrono::steady_clock::time_point MSTEPSTART = std::chrono::steady_clock::now();
 			M_step();
+			std::chrono::steady_clock::time_point MSTEPSEND = std::chrono::steady_clock::now();
+
+			std::chrono::duration<double> TE = ESTEPSEND - ESTEPSTART;
+			std::chrono::duration<double> TM = MSTEPSEND - MSTEPSTART;
+			std::chrono::duration<double> TO = OSTEPSEND - OSTEPSTART;
+
+			ESTEPTOTAL += std::chrono::duration_cast<std::chrono::microseconds>(TE).count();
+			MSTEPTOTAL += std::chrono::duration_cast<std::chrono::milliseconds>(TM).count();
+			OPTTOTAL += std::chrono::duration_cast<std::chrono::milliseconds>(TO).count();
 
 			//check parameter convergenece
 			if(Convergence() == 1){
@@ -139,12 +180,17 @@ public:
 			}
 
 			//update parameters
+			std::chrono::steady_clock::time_point UPDATESTART = std::chrono::steady_clock::now();
 			for(int j=0; j<_K; j++){
 				lineages[j].Update_parameter();
 			}
 			for(int j=0; j<_gene_num; j++){
 				genes[j].Update_parameter();
 			}
+			std::chrono::steady_clock::time_point UPDATEEND = std::chrono::steady_clock::now();
+
+			std::chrono::duration<double> TU = UPDATEEND - UPDATESTART;;
+			UPDATETOTAL += std::chrono::duration_cast<std::chrono::microseconds>(TU).count();
 
 			ll = Log_likelihood();
 
@@ -156,7 +202,17 @@ public:
 			_old_ll = ll;
 
 		}
-
+		std::cout << "TOTAL TIME BREAKDOWN IN SECONDS:" << "\n";
+		std::cout << "ESTEP: " << ESTEPTOTAL/(1000.0*1000.0) << "\n";
+		std::cout << "MSTEP: " << MSTEPTOTAL/1000.0 << "\n";
+		std::cout << "OPTIMIZE STEP: " << OPTTOTAL/1000.0 << "\n";
+		std::cout << "UPDATE STEP: " << UPDATETOTAL/(1000.0*1000.0) << "\n";
+		for(int i = 0; i < 4; i++){
+			std::cout << "MSTEPBREAK: " << MSTEPBREAK[i]/(1000.0*1000.0) << "\n";
+		}
+		for(int i = 0; i < 3; i++){
+			std::cout << "OSTEPBREAK: " << OSTEPBREAK[i]/(1000.0*1000.0) << "\n";
+		}
 		return 0;
 	}
 
@@ -174,6 +230,7 @@ public:
 		long double denominator = 0.0;
 		long double e_minus_at_power;
 		
+		std::chrono::steady_clock::time_point TIMESTART = std::chrono::steady_clock::now();
 		for(int i=0; i<_gene_num; i++){
 			for(int j=0; j<_K; j++){
 				new_theta = lineages[j].Theta(i);
@@ -189,7 +246,11 @@ public:
 				lineages[j].Add_new_theta(i, new_theta);
 			}
 		}
+		std::chrono::steady_clock::time_point TIMEEND = std::chrono::steady_clock::now();
+		std::chrono::duration<double> TE = TIMEEND - TIMESTART;
+		MSTEPBREAK[0] += std::chrono::duration_cast<std::chrono::microseconds>(TE).count();
 
+		TIMESTART = std::chrono::steady_clock::now();
 		//optimize alpha
 		double new_alpha;
 		double f_alpha;
@@ -220,7 +281,11 @@ public:
 
 			genes[i].Add_new_alpha(new_alpha);
 		}
+		TIMEEND = std::chrono::steady_clock::now();
+		TE = TIMEEND - TIMESTART;
+		MSTEPBREAK[1] += std::chrono::duration_cast<std::chrono::microseconds>(TE).count();
 
+		TIMESTART = std::chrono::steady_clock::now();
 		//optimize sigma_squared
 		int effective_cell_num;
 		double new_sigma_squared;
@@ -243,7 +308,11 @@ public:
 
 			genes[i].Add_new_sigma_squared(new_sigma_squared);
 		}
+		TIMEEND = std::chrono::steady_clock::now();
+		TE = TIMEEND - TIMESTART;
+		MSTEPBREAK[2] += std::chrono::duration_cast<std::chrono::microseconds>(TE).count();
 
+		TIMESTART = std::chrono::steady_clock::now();
 		//optimize pi
 		double new_pi, sum_pi=0;
 		for(int i=0; i<_K; i++){
@@ -259,6 +328,9 @@ public:
 		for(int i=0; i<_K; i++){
 			lineages[i].Normalize_new_pi(sum_pi);
 		}
+		TIMEEND = std::chrono::steady_clock::now();
+		TE = TIMEEND - TIMESTART;
+		MSTEPBREAK[3] += std::chrono::duration_cast<std::chrono::microseconds>(TE).count();
 	}
 
 	void Optimize_time(){
@@ -273,6 +345,8 @@ public:
 				old_time = new_time;
 				f1 = 0.0;
 				f2 = 0.0;
+				
+				std::chrono::steady_clock::time_point TIMESTART = std::chrono::steady_clock::now();
 				for(int j=0; j<_K; j++){
 					for(int k=0; k<_gene_num; k++){
 						at = genes[k].Alpha() * old_time;
@@ -283,7 +357,12 @@ public:
 						f1 += cells[i].Gamma(j) * (at*(1-cosh(at)/sinh(at)) - 2*genes[k].Alpha()/genes[k].Sigma_squared()*E);
 					}
 				}
+				std::chrono::steady_clock::time_point TIMEEND = std::chrono::steady_clock::now();
+				std::chrono::duration<double> TE = TIMEEND - TIMESTART;
+				OSTEPBREAK[0] += std::chrono::duration_cast<std::chrono::microseconds>(TE).count();
+				
 
+				TIMESTART = std::chrono::steady_clock::now();
 				for(int j=0; j<_K; j++){
 					for(int k=0; k<_gene_num; k++){
 						at = genes[k].Alpha() * old_time;
@@ -293,6 +372,9 @@ public:
 						f2 -= 2 * cells[i].Gamma(j) * genes[k].Alpha() * genes[k].Alpha() * (sinh(at)*cosh(at) - at*(1+cosh(at)*cosh(at))) * X0_minus_theta_times_Xn_minus_theta(k,i,j,old_time) / genes[k].Sigma_squared() / sinh(at) / sinh(at) / sinh(at);
 					}
 				}
+				TIMEEND = std::chrono::steady_clock::now();
+				TE = TIMEEND - TIMESTART;
+				OSTEPBREAK[1] += std::chrono::duration_cast<std::chrono::microseconds>(TE).count();
 
 				new_time = old_time - f1/f2;
 
@@ -309,15 +391,19 @@ public:
 			}
 
 			double ll0, ll1, ll2, ll3;
+			std::chrono::steady_clock::time_point TIMESTART = std::chrono::steady_clock::now();
 			ll0 = Log_likelihood_of_cell(i, new_time);
-    		ll1 = Log_likelihood_of_cell(i, _min_time);
-    		ll2 = Log_likelihood_of_cell(i, _max_time);
-    		ll3 = Log_likelihood_of_cell(i, pre_time);
+    			ll1 = Log_likelihood_of_cell(i, _min_time);
+    			ll2 = Log_likelihood_of_cell(i, _max_time);
+    			ll3 = Log_likelihood_of_cell(i, pre_time);
+			std::chrono::steady_clock::time_point TIMEEND = std::chrono::steady_clock::now();
+			std::chrono::duration<double> TE = TIMEEND - TIMESTART;
+			OSTEPBREAK[2] += std::chrono::duration_cast<std::chrono::microseconds>(TE).count();
 
-    		if(ll3 > ll0 && ll3 > ll1 && ll3 > ll2){
-    			cells[i].Add_new_time(pre_time);
-    		}
-    		else if(ll0 >= ll1 && ll0 >= ll2){
+    			if(ll3 > ll0 && ll3 > ll1 && ll3 > ll2){
+    				cells[i].Add_new_time(pre_time);
+    			}
+    			else if(ll0 >= ll1 && ll0 >= ll2){
 				cells[i].Add_new_time(new_time);
 			}
 			else if(ll1 > ll2){
