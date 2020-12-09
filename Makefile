@@ -1,4 +1,5 @@
 #Makefile
+
 all: scoup scoup_resume cor sp
 scoup: src/scoup.cpp src/ou.h src/node.h
 	g++ -g -fopenmp -o scoup src/scoup.cpp
