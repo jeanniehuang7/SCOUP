@@ -37,7 +37,7 @@ public:
 	double _thresh;
 
 	double MSTEPBREAK[4] = {0.0};
-	double OSTEPBREAK[3] = {0.0};
+	double OSTEPBREAK[2] = {0.0};
 
 	Continuous_OU_process(int g, int c, int k, int max_ite1, int max_ite2, double alpha_min, double alpha_max, double t_min, double t_max, double sigma_squared_min, double thresh){
 		_max_ite1 = max_ite1;
@@ -104,6 +104,7 @@ public:
 
 	int EM(){
 		double ll=0;
+		std::cout << "MSTEP LOOPS: " << _K << " " << _gene_num << " " << _cell_num << "\n";
 
 		int step=100, id=1;
 
@@ -210,7 +211,7 @@ public:
 		for(int i = 0; i < 4; i++){
 			std::cout << "MSTEPBREAK: " << MSTEPBREAK[i]/(1000.0*1000.0) << "\n";
 		}
-		for(int i = 0; i < 3; i++){
+		for(int i = 0; i < 2; i++){
 			std::cout << "OSTEPBREAK: " << OSTEPBREAK[i]/(1000.0*1000.0) << "\n";
 		}
 		return 0;
@@ -231,6 +232,7 @@ public:
 		long double e_minus_at_power;
 		
 		std::chrono::steady_clock::time_point TIMESTART = std::chrono::steady_clock::now();
+		#pragma omp parallel for default(shared) private(e_minus_at_power, numerator,denominator,new_theta)// reduction(+:numerator,denominator,new_theta)
 		for(int i=0; i<_gene_num; i++){
 			for(int j=0; j<_K; j++){
 				new_theta = lineages[j].Theta(i);
@@ -239,7 +241,6 @@ public:
 				for(int k=0; k<_cell_num; k++){
 					e_minus_at_power = exp(-genes[i].Alpha()*cells[k].Time());
 					numerator += cells[k].Gamma(j) * 2 * (cells[k].Xn(i) - e_minus_at_power*X0(i,k,j) - (1 - e_minus_at_power)*lineages[j].Theta(i)) / (genes[i].Alpha()*(1+e_minus_at_power));
-					//numerator += cells[k].Gamma(j) * ((cells[k].Xn(i)+genes[i].X0()-2*lineages[j].Theta(i))*(cosh(genes[i].Alpha()*cells[k].Time())-1)/sinh(genes[i].Alpha()*cells[k].Time()) + cells[k].Xn(i) - genes[i].X0()) / genes[i].Alpha();
 					denominator += cells[k].Gamma(j) * cells[k].Time();
 				}
 				new_theta += numerator/denominator;
@@ -255,6 +256,8 @@ public:
 		double new_alpha;
 		double f_alpha;
 		double at;
+
+		#pragma omp parallel for default(shared) private(at, new_alpha, numerator,denominator,f_alpha)// reduction(+:numerator,denominator,f_alpha)
 		for(int i=0; i<_gene_num; i++){
 			numerator = 0.0;
 			denominator = 0.0;
@@ -289,6 +292,7 @@ public:
 		//optimize sigma_squared
 		int effective_cell_num;
 		double new_sigma_squared;
+		#pragma omp parallel for default(shared) private(effective_cell_num, new_sigma_squared, at)
 		for(int i=0; i<_gene_num; i++){
 			effective_cell_num = 0;
 			new_sigma_squared = 0.0;
@@ -335,7 +339,7 @@ public:
 
 	void Optimize_time(){
 		//optimize t
-		int max_ite=100;
+		/*int max_ite=100;
 		double at, old_time, new_time, pre_time, E, f1, f2;
 		for(int i=0; i<_cell_num; i++){
 			new_time = cells[i].Time();
@@ -347,6 +351,8 @@ public:
 				f2 = 0.0;
 				
 				std::chrono::steady_clock::time_point TIMESTART = std::chrono::steady_clock::now();
+
+				#pragma omp parallel for default(shared) private(at) reduction(+:f2,E,f1) collapse(2)
 				for(int j=0; j<_K; j++){
 					for(int k=0; k<_gene_num; k++){
 						at = genes[k].Alpha() * old_time;
@@ -355,16 +361,7 @@ public:
 						E /= sinh(at) * sinh(at);
 						
 						f1 += cells[i].Gamma(j) * (at*(1-cosh(at)/sinh(at)) - 2*genes[k].Alpha()/genes[k].Sigma_squared()*E);
-					}
-				}
-				std::chrono::steady_clock::time_point TIMEEND = std::chrono::steady_clock::now();
-				std::chrono::duration<double> TE = TIMEEND - TIMESTART;
-				OSTEPBREAK[0] += std::chrono::duration_cast<std::chrono::microseconds>(TE).count();
-				
 
-				TIMESTART = std::chrono::steady_clock::now();
-				for(int j=0; j<_K; j++){
-					for(int k=0; k<_gene_num; k++){
 						at = genes[k].Alpha() * old_time;
 						f2 += cells[i].Gamma(j) * genes[k].Alpha() * (1-cosh(at)/sinh(at));
 						f2 += cells[i].Gamma(j) * at * genes[k].Alpha() / sinh(at) / sinh(at);
@@ -372,9 +369,9 @@ public:
 						f2 -= 2 * cells[i].Gamma(j) * genes[k].Alpha() * genes[k].Alpha() * (sinh(at)*cosh(at) - at*(1+cosh(at)*cosh(at))) * X0_minus_theta_times_Xn_minus_theta(k,i,j,old_time) / genes[k].Sigma_squared() / sinh(at) / sinh(at) / sinh(at);
 					}
 				}
-				TIMEEND = std::chrono::steady_clock::now();
-				TE = TIMEEND - TIMESTART;
-				OSTEPBREAK[1] += std::chrono::duration_cast<std::chrono::microseconds>(TE).count();
+				std::chrono::steady_clock::time_point TIMEEND = std::chrono::steady_clock::now();
+				std::chrono::duration<double> TE = TIMEEND - TIMESTART;
+				OSTEPBREAK[0] += std::chrono::duration_cast<std::chrono::microseconds>(TE).count();
 
 				new_time = old_time - f1/f2;
 
@@ -392,10 +389,29 @@ public:
 
 			double ll0, ll1, ll2, ll3;
 			std::chrono::steady_clock::time_point TIMESTART = std::chrono::steady_clock::now();
-			ll0 = Log_likelihood_of_cell(i, new_time);
-    			ll1 = Log_likelihood_of_cell(i, _min_time);
-    			ll2 = Log_likelihood_of_cell(i, _max_time);
-    			ll3 = Log_likelihood_of_cell(i, pre_time);
+			#pragma omp parallel
+			{
+				#pragma omp single
+				{
+					#pragma omp task
+					{
+						ll0 = Log_likelihood_of_cell(i, new_time);
+					}					
+					#pragma omp task
+					{
+    						ll1 = Log_likelihood_of_cell(i, _min_time);
+					}					
+					#pragma omp task
+					{
+    						ll2 = Log_likelihood_of_cell(i, _max_time);
+					}					
+					#pragma omp task
+					{
+    						ll3 = Log_likelihood_of_cell(i, pre_time);
+					}					
+				}
+			}
+
 			std::chrono::steady_clock::time_point TIMEEND = std::chrono::steady_clock::now();
 			std::chrono::duration<double> TE = TIMEEND - TIMESTART;
 			OSTEPBREAK[2] += std::chrono::duration_cast<std::chrono::microseconds>(TE).count();
@@ -413,7 +429,105 @@ public:
 				cells[i].Add_new_time(_max_time);
 			}
 			cells[i].Update_parameter();
+		}*/
+
+		int max_ite=100;
+
+		std::chrono::steady_clock::time_point TIMESTART = std::chrono::steady_clock::now();
+		
+		double *old_time = new double[_cell_num];
+		double *new_time = new double[_cell_num];
+		bool *done = new bool[_cell_num];
+		int allDone = 0;
+
+		for(int i = 0; i < _cell_num; i++){
+			new_time[i] = cells[i].Time();
+			done[i] = false;
 		}
+
+		for(int ite=0; ite<max_ite; ite++){
+			#pragma omp parallel for default(shared) schedule(dynamic,1) reduction(+:allDone)
+			for(int i=0; i<_cell_num; i++){
+				if(done[i] == false){
+					old_time[i] = new_time[i];
+					double f1 = 0.0;
+					double f2 = 0.0;
+					for(int j=0; j<_K; j++){
+						for(int k=0; k<_gene_num; k++){
+
+							double at = genes[k].Alpha() * old_time[i];
+							double E = -0.5*at*(X0_minus_theta_squared(k,i,j,old_time[i]) + Xn_minus_theta_squared(k,i,j));
+							E += at*cosh(at)*X0_minus_theta_times_Xn_minus_theta(k,i,j,old_time[i]);
+							E /= sinh(at) * sinh(at);
+						
+							f1 += cells[i].Gamma(j) * (at*(1-cosh(at)/sinh(at)) - 2*genes[k].Alpha()/genes[k].Sigma_squared()*E);
+
+							at = genes[k].Alpha() * old_time[i];
+							f2 += cells[i].Gamma(j) * genes[k].Alpha() * (1-cosh(at)/sinh(at));
+							f2 += cells[i].Gamma(j) * at * genes[k].Alpha() / sinh(at) / sinh(at);
+							f2 += cells[i].Gamma(j) * genes[k].Alpha() * genes[k].Alpha() * (sinh(at) - 2*at*cosh(at)) * (X0_minus_theta_squared(k,i,j,old_time[i]) + Xn_minus_theta_squared(k,i,j)) 
+								/ genes[k].Sigma_squared() / sinh(at) / sinh(at) / sinh(at);
+							f2 -= 2 * cells[i].Gamma(j) * genes[k].Alpha() * genes[k].Alpha() * (sinh(at)*cosh(at) - at*(1+cosh(at)*cosh(at))) * X0_minus_theta_times_Xn_minus_theta(k,i,j,old_time[i]) 
+								/ genes[k].Sigma_squared() / sinh(at) / sinh(at) / sinh(at);
+						}
+					}
+					new_time[i] = old_time[i] - f1/f2;
+
+					if(new_time[i] < _min_time){
+						new_time[i] = _max_time;
+					}
+					else if(new_time[i] > _max_time){
+						new_time[i] = _min_time;
+					}
+
+					if(fabs(old_time[i]-new_time[i]) < _thresh){
+						done[i] = true;
+						allDone++;
+					}
+				}
+			}
+			if(allDone >= _cell_num){
+				break;
+			}
+		}
+
+		std::chrono::steady_clock::time_point TIMEEND = std::chrono::steady_clock::now();
+		std::chrono::duration<double> TE = TIMEEND - TIMESTART;
+		OSTEPBREAK[0] += std::chrono::duration_cast<std::chrono::microseconds>(TE).count();
+
+		TIMESTART = std::chrono::steady_clock::now();
+		#pragma omp parallel for default(shared)
+		for(int i=0; i<_cell_num; i++){
+			double ll0, ll1, ll2, ll3;
+			double pre_time = cells[i].Time();
+
+			ll0 = Log_likelihood_of_cell(i, new_time[i]);
+    			ll1 = Log_likelihood_of_cell(i, _min_time);
+    			ll2 = Log_likelihood_of_cell(i, _max_time);
+    			ll3 = Log_likelihood_of_cell(i, pre_time);
+
+
+    			if(ll3 > ll0 && ll3 > ll1 && ll3 > ll2){
+    				cells[i].Add_new_time(pre_time);
+    			}
+    			else if(ll0 >= ll1 && ll0 >= ll2){
+				cells[i].Add_new_time(new_time[i]);
+			}
+			else if(ll1 > ll2){
+				cells[i].Add_new_time(_min_time);
+			}
+			else{
+				cells[i].Add_new_time(_max_time);
+			}
+			cells[i].Update_parameter();
+		}
+		TIMEEND = std::chrono::steady_clock::now();
+		TE = TIMEEND - TIMESTART;
+		OSTEPBREAK[1] += std::chrono::duration_cast<std::chrono::microseconds>(TE).count();
+
+		delete[] old_time;
+		delete[] new_time;
+		delete[] done;
 	}
 
 	void Calc_gene_responsibility(){
